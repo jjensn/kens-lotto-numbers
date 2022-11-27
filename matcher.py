@@ -16,7 +16,7 @@ class TemplateMatch:
     self.ticket_copy = self.tickets.gray.copy()
     self.template_copy = self.template.gray.copy()
 
-    self.logo_locations = {}
+    self.logo_locations = []
 
   def have_bounds_nearby(self, haystack, topleft_coords) ->bool:
     
@@ -52,8 +52,8 @@ class TemplateMatch:
     for (x, y) in zip(xCoords, yCoords):
       rot = RRect((x,y), (self.template.width, self.template.height), rotation)
 
-      if not rot.topleft_corner() in bounds_dict and not self.have_bounds_nearby(bounds_dict, rot.topleft_corner()):
-        bounds_dict[rot.topleft_corner()] = rot
+      if not rot.top_left in bounds_dict and not self.have_bounds_nearby(bounds_dict, rot.top_left):
+        bounds_dict[rot.top_left] = rot
 
         # we cheat and just draw a rectangle over the logo we found already so we don't find it again
         cv2.rectangle(self.ticket_copy, (x, y), (x + self.template.width + 2, y + self.template.height + 2), (255, 0, 0), -1)
@@ -66,9 +66,10 @@ class TemplateMatch:
     bounds_dict = {} 
 
     for i in np.arange(-1.0 * consider_degrees, consider_degrees, step):      
+      
       rotated_logo = self.template.rotate(i)
 
-      bounds_dict.update(self.find_logo_bounds(rotated_logo, 0.45, -i))
+      bounds_dict.update(self.find_logo_bounds(rotated_logo, 0.45, i))
 
     return bounds_dict
 
@@ -80,19 +81,40 @@ class TemplateMatch:
     non_rotated_logos = self.find_logo_bounds(self.template_copy, 0.8)
 
     # rotate the logo by -5 and +5 degrees to find others (because Ken can't be assed to do it right)
-    rotated_logos = self.find_rotated_logos(5.0)
+    rotated_logos = self.find_rotated_logos(4.0, 0.15)
 
     # prefer the non-rotated ones before the rotated ones in the dict
     rotated_logos.update(non_rotated_logos)
 
-    self.logo_locations = rotated_logos.copy()
+    tmp_logos = []
+
+    for k,v in rotated_logos.items():
+      tmp_logos.append(v)
+
+    # print(self.logo_locations)
+
+    # self.logo_locations = sorted(tmp_logos, key=lambda x: (math.dist(x.top_left, (self.tickets.width, self.tickets.height)), -x.bottom_right[1]), reverse=True)
+    self.logo_locations = sorted(tmp_logos, key=lambda x: x.center())
+    #self.logo_locations = rotated_logos.copy()
 
     print(f'Found {len(self.logo_locations)} markers in the image')
 
   def tickets_per_row(self) -> int:
-    pass
+    # pass
+    first_ticket = self.first_ticket()
+    last_ticket = self.last_ticket()
+
+    logo_width = math.dist(first_ticket.top_left, first_ticket.top_right)
+
+    (x, y) = last_ticket.top_left
+    y = first_ticket.top_left[1]
+
+
 
   def tickets_per_column(self) -> int:
+    pass
+
+  def find_ticket_under(self, start: RRect) -> RRect:
     pass
 
   def first_ticket(self) -> RRect:
@@ -100,40 +122,34 @@ class TemplateMatch:
     curr_dist = 9999999.0000
     ticket = None
 
-    for k,v in self.logo_locations.items():
-      dist = math.dist(start, v.topleft_corner())
+    for v in self.logo_locations:
+      dist = math.dist(start, v.top_left)
     
       if dist < curr_dist:
         curr_dist = dist
-        ticket = k
+        ticket = v
 
-    if ticket:
-      return self.logo_locations[ticket]
-    else:
-      return None
+    return ticket
 
 
   def last_ticket(self) -> RRect:
     start = (self.tickets.width, self.tickets.height)
 
-    print(start)
     curr_dist = 9999999.0000
     ticket = None
 
-    for k,v in self.logo_locations.items():
-      dist = math.dist(start, v.topleft_corner())
+    for v in self.logo_locations:
+      dist = math.dist(start, v.bottom_right)
     
       if dist < curr_dist:
         curr_dist = dist
-        ticket = k
+        ticket = v
 
-    if ticket:
-      return self.logo_locations[ticket]
-    else:
-      return None
+    
+    return v
 
   def draw_contours(self):
-    for k,v in self.logo_locations.items():
+    for v in self.logo_locations:
 
       pts = v.to_rect_tuple()
       #cv2.rectangle(self.tickets.original_image,(pts[0], pts[1]), (pts[2], pts[3]), (255, 125, 0), 2)
@@ -141,4 +157,15 @@ class TemplateMatch:
       box = np.int0(v.cv2_box_points())
       cv2.drawContours(self.tickets.original_image, [box],0, (124, 0, 255), 2)
 
-    
+  def adjust_ticket_rectangles(self):
+
+    for v in self.logo_locations:
+      v.extend_bottom_by(10)
+      v.top_left = v.bottom_left
+      v.top_right = v.bottom_right
+      v.top_left = (v.top_left[0]+10, v.top_left[1])
+      v.bottom_left = (v.bottom_left[0]+10, v.bottom_left[1])
+      v.W += 65
+      v.H += 75
+      v.extend_bottom_by(75)
+      v.extend_right_by(65)
